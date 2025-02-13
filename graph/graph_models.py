@@ -43,9 +43,9 @@ Base = declarative_base()
 
 class EdgeType(str, Enum):
     """Valid types of edges in the theorem graph"""
-    LOGICAL_DEPENDENCY = "logical_dependency"  # Theorem A requires Theorem B
-    PROOF_TECHNIQUE = "proof_technique"     # Theorems share proof techniques
-    EQUIVALENCE = "equivalence"             # Theorems are equivalent/isomorphic
+    LOGICAL_DEPENDENCY = "logical_dependency"  # Theorem A requires Theorem B for its proof
+    PROOF_TECHNIQUE = "proof_technique"     # Theorems share similar proof techniques/methods
+    EQUIVALENCE = "equivalence"             # Theorems are equivalent/isomorphic to each other
 
 class GraphNodeMetadata(BaseModel):
     """Metadata for graph nodes"""
@@ -366,3 +366,50 @@ class TheoremGraph:
             impact /= subgraph.number_of_edges()
             
         return min(impact, 1.0)
+
+async def insert_graph_edge(
+    session: AsyncSession,
+    source_node: int,
+    target_node: int, 
+    edge_type: EdgeType,
+    metadata: Optional[Dict[str, Any]] = None
+) -> GraphEdge:
+    """
+    Insert a new edge between two theorem nodes.
+
+    Args:
+        session: Database session
+        source_node: ID of the source node
+        target_node: ID of the target node  
+        edge_type: Type of relationship
+        metadata: Optional edge metadata
+    
+    Returns:
+        Created GraphEdge instance
+    
+    Raises:
+        ValueError: If invalid nodes or edge type
+    """
+    try:
+        edge = GraphEdge(
+            source_node_id=source_node,
+            target_node_id=target_node,
+            edge_type=edge_type,
+            metadata=metadata or {},
+            created_at=datetime.utcnow()
+        )
+        
+        session.add(edge)
+        await session.commit()
+        await session.refresh(edge)
+        
+        logger.info(
+            f"Created {edge_type} edge from node {source_node} to {target_node}"
+        )
+        
+        return edge
+
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error inserting graph edge: {e}")
+        raise
