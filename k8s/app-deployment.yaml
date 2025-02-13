@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: theoremlib-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: theoremlib-app
+  template:
+    metadata:
+      labels:
+        app: theoremlib-app
+    spec:
+      containers:
+      - name: theoremlib
+        image: theoremlib:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: theoremlib-secrets
+              key: DATABASE_URL
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /app/credentials/google-cloud.json
+        volumeMounts:
+        - name: storage
+          mountPath: /app/storage
+        - name: google-credentials
+          mountPath: /app/credentials
+          readOnly: true
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: theoremlib-storage
+      - name: google-credentials
+        secret:
+          secretName: google-credentials
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: theoremlib-app
+spec:
+  selector:
+    app: theoremlib-app
+  ports:
+  - port: 80
+    targetPort: 8000
+  type: LoadBalancer

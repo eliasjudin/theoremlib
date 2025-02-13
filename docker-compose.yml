@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://theoremlib:theoremlib@db:5432/theoremlib
+      - ONTOLOGY_PATH=/app/ontology/math_ontology.json
+    volumes:
+      - ./storage:/app/storage
+      - ./ontology:/app/ontology
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=theoremlib
+      - POSTGRES_PASSWORD=theoremlib
+      - POSTGRES_DB=theoremlib
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    command: ["postgres", "-c", "shared_preload_libraries=pgvector"]
+
+volumes:
+  postgres_data:

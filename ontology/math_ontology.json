@@ -1,0 +1,47 @@
+{
+    "algebra": {
+        "id": "math.algebra",
+        "name": "Algebra",
+        "category": "core",
+        "parent_concepts": [],
+        "related_concepts": ["linear_algebra", "abstract_algebra"]
+    },
+    "linear_algebra": {
+        "id": "math.linear_algebra",
+        "name": "Linear Algebra",
+        "category": "core",
+        "parent_concepts": ["algebra"],
+        "related_concepts": ["matrix_theory", "vector_spaces"]
+    },
+    "analysis": {
+        "id": "math.analysis",
+        "name": "Mathematical Analysis",
+        "category": "core",
+        "parent_concepts": [],
+        "related_concepts": ["real_analysis", "complex_analysis", "functional_analysis"]
+    },
+    "topology": {
+        "id": "math.topology",
+        "name": "Topology",
+        "category": "core",
+        "parent_concepts": ["analysis"],
+        "related_concepts": ["algebraic_topology", "differential_geometry"]
+    },
+    "proof_techniques": {
+        "direct_proof": {
+            "id": "proof.direct",
+            "name": "Direct Proof",
+            "indicators": ["we show directly", "first observe", "therefore"]
+        },
+        "contradiction": {
+            "id": "proof.contradiction",
+            "name": "Proof by Contradiction",
+            "indicators": ["assume by contradiction", "suppose not", "leading to a contradiction"]
+        },
+        "induction": {
+            "id": "proof.induction",
+            "name": "Mathematical Induction",
+            "indicators": ["base case", "inductive step", "assume for k"]
+        }
+    }
+}
