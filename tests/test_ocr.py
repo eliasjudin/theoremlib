@@ -1,158 +1,90 @@
 """
-Tests for OCR and LaTeX layer verification functionality
+Test suite for OCR module functionality
 """
 
 import pytest
 from pathlib import Path
-import asyncio
-import fitz
+import tempfile
+import os
 from unittest.mock import Mock, patch
-from google.cloud import vision
 
-from ..ocr.ocr_module import (
-    OCRProcessor,
-    OCRResult,
-    OCRParameters,
-    ExtractionMethod
-)
+from ..ocr.ocr_module import OCRProcessor
+from .test_core import sample_metadata
 
 @pytest.fixture
-def sample_latex_pdf(tmp_path):
-    """Create a sample PDF with LaTeX content"""
-    pdf_path = tmp_path / "latex_sample.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    
-    # Add some LaTeX-like content
-    latex_text = r"""
-    \begin{theorem}
-    For any real number x, $x^2 \geq 0$.
-    \end{theorem}
-    
-    \begin{proof}
-    Let x be any real number. Then...
-    \end{proof}
-    """
-    page.insert_text((50, 50), latex_text)
-    doc.save(pdf_path)
-    doc.close()
-    return pdf_path
-
-@pytest.fixture
-def sample_scanned_pdf(tmp_path):
-    """Create a sample PDF simulating a scanned document"""
-    pdf_path = tmp_path / "scanned_sample.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    
-    # Add image-based content (simulating a scan)
-    page.insert_image((0, 0), pixmap=fitz.Pixmap(fitz.csRGB, (100, 100), b"\xff" * 100 * 100 * 3))
-    doc.save(pdf_path)
-    doc.close()
-    return pdf_path
-
-@pytest.fixture
-def mock_vision_client():
-    """Mock Google Cloud Vision client"""
-    with patch('google.cloud.vision.ImageAnnotatorClient') as mock_client:
-        # Create mock response
-        mock_response = Mock()
-        mock_page = Mock()
-        mock_block = Mock()
-        mock_block.confidence = 0.95
-        mock_block.text = "Sample text"
-        mock_block.bounding_box.vertices = [
-            Mock(x=0, y=0),
-            Mock(x=100, y=0),
-            Mock(x=100, y=100),
-            Mock(x=0, y=100)
-        ]
-        mock_page.blocks = [mock_block]
-        mock_response.pages = [mock_page]
-        mock_response.full_text_annotation.text = "Sample text"
-        
-        mock_client.return_value.document_text_detection.return_value = mock_response
-        yield mock_client
+def sample_pdf():
+    """Create a sample PDF file for testing"""
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        # Create minimal PDF with text layer
+        tmp.write(b"%PDF-1.7\n%Test PDF with text layer")
+        tmp_path = tmp.name
+    yield Path(tmp_path)
+    os.unlink(tmp_path)
 
 @pytest.mark.asyncio
-async def test_latex_layer_detection(sample_latex_pdf):
-    """Test detection of LaTeX text layer"""
-    processor = OCRProcessor("dummy_key")
-    has_latex, confidence = processor.has_complete_latex_layer(sample_latex_pdf)
-    
-    assert has_latex
-    assert confidence > 0.9
-    assert confidence <= 1.0
+async def test_ocr_text_layer_detection(sample_pdf):
+    """Test detection of existing text layer"""
+    processor = OCRProcessor(api_key="test_key")
+    has_text = await processor.check_text_layer(sample_pdf)
+    assert has_text is True
 
 @pytest.mark.asyncio
-async def test_latex_extraction(sample_latex_pdf):
-    """Test extraction from LaTeX layer"""
-    processor = OCRProcessor("dummy_key")
-    results = await processor.extract_from_latex_layer(sample_latex_pdf)
+async def test_ocr_processing():
+    """Test OCR processing with mock API response"""
+    mock_response = {
+        "text": "Theorem 1. Example theorem statement\nProof: Example proof",
+        "confidence": 0.95
+    }
     
-    assert len(results) > 0
-    assert all(r.extraction_method == ExtractionMethod.LATEX for r in results)
-    assert all(r.confidence == 1.0 for r in results)
-    assert "theorem" in results[0].text_content.lower()
-    assert "proof" in results[0].text_content.lower()
-
-@pytest.mark.asyncio
-async def test_ocr_fallback(sample_scanned_pdf, mock_vision_client):
-    """Test OCR fallback for scanned documents"""
-    processor = OCRProcessor("dummy_key")
-    results = await processor.process_pdf(sample_scanned_pdf)
-    
-    assert len(results) > 0
-    assert any(r.extraction_method == ExtractionMethod.OCR for r in results)
-    assert all(r.confidence > 0 for r in results)
-
-@pytest.mark.asyncio
-async def test_ocr_retry_logic(sample_scanned_pdf, mock_vision_client):
-    """Test OCR retry logic with parameter adjustment"""
-    # Make first attempt fail
-    mock_vision_client.return_value.document_text_detection.side_effect = [
-        Exception("First attempt failed"),
-        Mock(
-            pages=[Mock(
-                blocks=[Mock(confidence=0.95, text="Retry successful")],
-                full_text_annotation=Mock(text="Retry successful")
-            )]
+    with patch("ocr.ocr_module.OCRProcessor._call_ocr_api", 
+              return_value=mock_response):
+        processor = OCRProcessor(api_key="test_key")
+        result = await processor.process_page(
+            page_image=b"test_image",
+            page_number=1
         )
+        assert result["text"] is not None
+        assert result["confidence"] > 0.9
+
+@pytest.mark.asyncio
+async def test_ocr_retries():
+    """Test OCR retry logic for low confidence results"""
+    responses = [
+        {"text": "Low quality text", "confidence": 0.4},
+        {"text": "Better quality text", "confidence": 0.9}
     ]
     
-    processor = OCRProcessor("dummy_key")
-    result = await processor.process_page(sample_scanned_pdf, 0)
-    
-    assert not result.requires_review
-    assert "Retry successful" in result.text_content
-    assert result.confidence > 0.9
+    mock_call = Mock(side_effect=responses)
+    with patch("ocr.ocr_module.OCRProcessor._call_ocr_api", mock_call):
+        processor = OCRProcessor(api_key="test_key")
+        result = await processor.process_page(
+            page_image=b"test_image",
+            page_number=1,
+            min_confidence=0.8
+        )
+        assert mock_call.call_count == 2
+        assert result["confidence"] > 0.8
 
 @pytest.mark.asyncio
-async def test_manual_review_flagging(sample_scanned_pdf, mock_vision_client):
-    """Test flagging for manual review after failed attempts"""
-    # Make all attempts fail with low confidence
-    mock_vision_client.return_value.document_text_detection.return_value = Mock(
-        pages=[Mock(
-            blocks=[Mock(confidence=0.5, text="Low confidence text")],
-            full_text_annotation=Mock(text="Low confidence text")
-        )]
+async def test_ocr_parameter_tuning():
+    """Test OCR parameter tuning for optimal results"""
+    processor = OCRProcessor(api_key="test_key")
+    params = processor.get_optimal_parameters(
+        sample_quality=0.5,
+        page_type="math"
     )
-    
-    processor = OCRProcessor("dummy_key", confidence_threshold=0.9)
-    result = await processor.process_page(sample_scanned_pdf, 0)
-    
-    assert result.requires_review
-    assert result.confidence < 0.9
-    assert result.extraction_method == ExtractionMethod.MANUAL
+    assert "math_mode" in params
+    assert params.get("enhance_formulas", False) is True
 
 @pytest.mark.asyncio
-async def test_ocr_parameters_adjustment():
-    """Test OCR parameters adjustment logic"""
-    params = OCRParameters()
-    initial_dpi = params.dpi
-    
-    params.adjust_for_retry()
-    
-    assert params.dpi > initial_dpi
-    assert params.enhance_math
-    assert params.page_segmentation_mode == 3  # Automatic mode
+async def test_ocr_error_handling():
+    """Test error handling during OCR processing"""
+    with patch("ocr.ocr_module.OCRProcessor._call_ocr_api", 
+              side_effect=Exception("API Error")):
+        processor = OCRProcessor(api_key="test_key")
+        with pytest.raises(Exception) as exc_info:
+            await processor.process_page(
+                page_image=b"test_image",
+                page_number=1
+            )
+        assert "API Error" in str(exc_info.value)
